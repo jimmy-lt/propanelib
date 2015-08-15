@@ -18,3 +18,5 @@ form::
 List of copyright holders
 -------------------------
 
+- Jimmy Thrasibule <jimmy.thrasibule@gmail.com>
+
