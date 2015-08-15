@@ -30,12 +30,18 @@ import shutil
 
 from contextlib import suppress
 
-from invoke import Collection
+from invoke import Collection, task
 
 
 #
 # Global definitions
 # ------------------
+
+ENVIRONMENT = {
+    'project': {
+        'build_d': 'build',
+    },
+}
 
 ns = Collection()
 
@@ -403,4 +409,42 @@ class fs(object):
             return False
 
         return True
+
+
+#
+# Task definitions
+# ----------------
+
+#
+# Global tasks
+# ^^^^^^^^^^^^
+
+@task(default=True)
+def build():
+    """Call all the build tasks to build the project."""
+    msg.write(msg.INFORMATION, 'Done!')
+
+
+@task
+def clean():
+    """Clean the whole project tree from built files."""
+    patterns = [
+        ENVIRONMENT['project']['build_d'],
+    ]
+
+    lines = [
+        x
+        for x in fs.lstree(patterns, recursive=True, include_path=True)
+        if os.path.isdir(x)
+    ]
+    if lines:
+        msg.write(msg.INFORMATION,
+                  'Cleaning environment', *sorted(lines, reverse=True))
+    msg.write(msg.INFORMATION, 'Done!')
+
+    fs.rmdir(patterns, recursive=True)
+
+
+ns.add_task(build)
+ns.add_task(clean)
 
