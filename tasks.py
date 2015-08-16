@@ -28,6 +28,9 @@ import sys
 import glob
 import shutil
 
+import yaml
+
+from copy import deepcopy
 from contextlib import suppress
 
 from invoke import Collection, task
@@ -36,12 +39,6 @@ from invoke import Collection, task
 #
 # Global definitions
 # ------------------
-
-ENVIRONMENT = {
-    'project': {
-        'build_d': 'build',
-    },
-}
 
 ns = Collection()
 
@@ -412,8 +409,145 @@ class fs(object):
 
 
 #
+# Working environment management
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+class env(object):
+    """Namespace for project's working environment management.
+
+    :attribute ENVIRONMENT_DEFAULTS: Default environment values.
+
+    """
+    ENVIRONMENT_DEFAULTS = {
+        'project': {
+            'build_d': 'build',
+            'src_d': 'src',
+        },
+    }
+
+
+    @classmethod
+    def dmap(cls, callback, *mapping, recurse=False):
+        """Apply *callack* to every item of *mapping*. If *recurse* is
+        ``True``, *callback* will also be applied to any child mapping
+        found.
+
+        .. note:: This method will alter given *mapping* if called
+                  *callback* does so.
+
+        :param func callback: Function to be applied to the elements in
+                              *mapping*.
+        :param dict mapping: Dictionary to apply *callback* on. Multiple
+                             may be given.
+        :param bool recurse: Should *callback* also be applied to child
+                             dictionaries? Defaults to ``False``.
+
+        """
+        for m in mapping:
+            with suppress(AttributeError):
+                for k, v in tuple(m.items()):
+                    if recurse and isinstance(v, dict):
+                        cls.dmap(callback, v, recurse)
+                    else:
+                        callback(m, k, v)
+
+
+    @classmethod
+    def load(cls, *pattern, use_defaults=False):
+        """Load a environment file into a new namespace.
+
+        :param str pattern: Pattern of environment files to load. Give
+                            multiple patterns to load all matching files
+                            in the same name space.
+
+        :param bool use_defaults: Should returned environment be using
+                                  default values as a base?
+
+        :returns: Environment dictionary.
+        :rtype: dict
+
+        """
+        environment = {}
+        if use_defaults:
+            environment = cls.ENVIRONMENT_DEFAULTS.copy()
+
+        def _load_include(mapping, key, val):
+            """Update given dictionary with given ``include`` directive
+            item.
+
+            An ``include`` directive is any dictionary key named
+            ``include`` with a path or a list of paths for value. The
+            file targeted by those paths should be a YAML environment
+            file to be added to given *mapping*.
+
+            This function will not loop over the dictionary and asumes
+            *key* and *val* is an item part of it.
+
+            :param dict mapping: Dictionary to look in and to be updated
+                                 by the ``include`` directives.
+
+            :param key: A key from *mapping*.
+            :param value: A value from *mapping*.
+
+            """
+            if key == 'include':
+                with suppress(KeyError):
+                    del mapping[key]
+                cls.update(mapping, cls.load(val))
+
+            # Try to look for inclue directives if list of dict.
+            with suppress(TypeError):
+                cls.dmap(_load_include, *val, recurse=True)
+        # end _load_include
+
+        # Defaults may have include directives.
+        cls.dmap(_load_include, environment, recurse=True)
+        for path in fs.shexpand(pattern):
+            loaded = {}
+            with open(path, 'r') as fp:
+                loaded = yaml.safe_load(fp)
+                cls.dmap(_load_include, loaded, recurse=True)
+            cls.update(environment, loaded)
+
+        return environment
+
+
+    @classmethod
+    def update(cls, target, *mapping):
+        """Merge given target dictionary with given *mapping* object.
+        Unlike Python's dict.update() method, if the same key is present
+        in both dictionaries and the value for this key is a dictionary,
+        it will be updated instead of being replaced by the dictionary
+        from the *mapping* object. All other data types will be replaced.
+
+        For example::
+
+          >>> d1 = {'baz': {'foo': 'foo'}, 'fizz': 'buzz'}
+          >>> d2 = {'baz': {'bar': 'bar'}, 'fizz': 'fizzbuzz'}
+          >>> env.update(d1, d2)
+          >>> d1
+          {'baz': {'foo': 'foo', 'bar': 'bar'}, 'fizz': 'fizzbuzz'}
+
+        :param dict target: Dictionary to be updated.
+        :param dict mapping: Dictionary to be merged. Multiple may be
+                             given.
+
+        """
+        for m in mapping:
+            with suppress(AttributeError):
+                for k, v in tuple(m.items()):
+                    if k in target and isinstance(v, dict):
+                        cls.update(target[k], v)
+                    else:
+                        target[k] = deepcopy(v)
+
+
+#
 # Task definitions
 # ----------------
+
+ENVIRONMENT = env.load('', use_defaults=True)
+
 
 #
 # Global tasks
