@@ -1,0 +1,62 @@
+#: propanelib.cf
+#: =============
+#:
+# 8< ------------------------------------------------------------------ >8
+#
+#  Copying
+#  -------
+#
+#  Copyright (c) 2015 propanelib authors and contributors.
+#
+#  This file is part of the *propanelib* project.
+#
+#  propanelib is a free software project. You can redistribute it and/or
+#  modify if under the terms of the MIT License.
+#
+#  This software project is distributed *as is*, WITHOUT WARRANTY OF ANY
+#  KIND; including but not limited to the WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE and NONINFRINGEMENT.
+#
+#  You should have received a copy of the MIT License along with
+#  propanelib. If not, see <http://opensource.org/licenses/MIT>.
+#
+# 8< ------------------------------------------------------------------ >8
+#
+#
+#: Promise bodies library from the *cf-propane* project.
+#:
+
+#: Bodies
+#: ------
+#:
+#: file
+#: ^^^^
+#:
+#: .. cf3:body:: file control
+#:
+#:   Set the content of this file in the
+#:   :cf3:ns:`propanelib` namespace.
+#:
+body file control
+{
+  namespace => "propanelib";
+  inputs => { @(propanelib:propanelib.inputs) };
+}
+
+
+#:
+#: Bundles
+#: -------
+#:
+#: .. cf3:bundle:: common propanelib:propanelib
+#:
+#:   Promise bodies library from the *cf-propane* project.
+#:
+bundle common propanelib
+{
+  vars:
+    any::
+      "inputs" => {
+      };
+}
+
