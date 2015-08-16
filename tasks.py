@@ -35,7 +35,7 @@ from copy import deepcopy
 from functools import reduce
 from contextlib import suppress
 
-from invoke import Collection, task
+from invoke import Collection, task, run
 
 
 #
@@ -411,6 +411,125 @@ class fs(object):
 
 
 #
+# Docstring
+# ^^^^^^^^^
+
+class docstring(object):
+    """Namespace for docstring operations.
+
+    :attribute COMMENT_START_WITH: Normal comment line identifier.
+    :attribute DOCSTRING_START_WITH: Docstring comment line identifier.
+
+    """
+    COMMENT_START_WITH = '#'
+    DOCSTRING_START_WITH = '#:'
+
+    DOCSTRING_INDENT = 2
+
+    EXT_CF  = '.cf'
+    EXT_RST = '.rst'
+
+
+    @classmethod
+    def extract(cls, path, dst, insert_code=False):
+        """Extract specially formatted comment strings (a.k.a.
+        docstrings) from file and save the result in *dst*.
+
+        Docstring comments should start with ``#:``.
+
+        :param str path: Path of the file from which to extract the
+                         docstrings.
+        :param str dst: Path to the file in which to write extracted
+                        docstrings.
+
+        :param bool insert_code: Shall the documented code also be
+                                 inserted in the resulting document?
+                                 Defaults to ``False``.
+
+        :returns: ``True`` if result file has been written, ``False``
+                  otherwise.
+        :rtype: bool
+
+        """
+        docstring_start_re = re.compile(
+            r'{}\s?'.format(cls.DOCSTRING_START_WITH)
+        )
+
+        doclines = []
+        doc_app  = doclines.append
+        with suppress(OSError), open(path, 'r') as fd:
+            code_block = False
+
+            for line in fd:
+                # Strip line to get the comment symbol on first position.
+                sline = line.strip()
+
+                # Start by looking if we have a docstring.
+                if sline.startswith(cls.DOCSTRING_START_WITH):
+                    # Insert blank line between previous code block
+                    # and next docstring line.
+                    if code_block:
+                        doc_app('\n')
+                        code_block = False
+
+                    ds_line = docstring_start_re.sub('', sline)
+                    doc_app('{}\n'.format(ds_line))
+
+                # If this is a blank line and we are not writing code
+                # or if this is a comment line, skip.
+                elif (not sline and not code_block) \
+                    or sline.startswith(cls.COMMENT_START_WITH):
+                    continue
+
+                # Any other lines should be code to be inserted.
+                elif insert_code:
+                    if not code_block:
+                        doc_app('.. code-block:: cf3\n\n')
+                        code_block = True
+                    doc_app(
+                        '{}{}\n'.format(
+                            ' ' * (cls.DOCSTRING_INDENT), line.rstrip()
+                        )
+                    )
+
+        if doclines:
+            with suppress(OSError), open(dst, 'w') as fd:
+                fd.writelines(doclines)
+                return True
+        return False
+
+
+    @classmethod
+    def to_dir(cls, src, dst, insert_code=False):
+        """Given a propanelib *src* directory, extract all the docstrings
+        from the source files and save the result in *dst*.
+
+        :param str src: Path to source code directory of a propanelib
+                        project.
+        :param str dst: Path to directory in which to save extracted
+                        docstring files.
+
+        :param bool insert_code: Shall the documented code also be
+                                 included in the resulting document?
+                                 Defaults to ``False``.
+
+        """
+        cf_files = [
+            (p, p.replace(src, dst).replace(cls.EXT_CF, cls.EXT_RST))
+            for p in sorted(fs.lstree(src, recursive=True))
+            if p.endswith(cls.EXT_CF) and not os.path.isdir(p)
+        ]
+
+        if not cf_files:
+            return
+
+        fs.copytree(src, dst)
+        for source, dest in cf_files:
+            cls.extract(source, dest, insert_code)
+        fs.rmdir(dst, recursive=True)
+
+
+#
 # Working environment management
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -426,7 +545,15 @@ class env(object):
             'build_d': 'build',
             'src_d': 'src',
         },
+        'doc': {
+            'insert_code': True,
+            'src_d': 'doc',
+            'target': 'html',
+        },
     }
+    ENVIRONMENT_DEFAULTS['doc']['build_d'] = os.path.join(
+        ENVIRONMENT_DEFAULTS['project']['build_d'], 'doc'
+    )
 
 
     @classmethod
@@ -703,16 +830,75 @@ ns.add_collection(ns_proj)
 
 
 #
+# Documentation tasks
+# ^^^^^^^^^^^^^^^^^^^
+
+@task(name='clean')
+def doc_clean():
+    """Clean project folder from built documentation files."""
+    patterns = [ENVIRONMENT['doc']['build_d'], ]
+
+    lines = [x for x in fs.shexpand(patterns)]
+    if lines:
+        msg.write(msg.INFORMATION,
+                  'Cleaning documentation', *sorted(lines, reverse=True))
+    fs.rmtree(patterns)
+
+
+_doc_build_help = {
+    'target': "Targeted documentation format. Default to {}.".format(
+        ENVIRONMENT['doc']['target']
+    ),
+    'code': "Insert documented code into documentation. Default to {}.".format(
+        ENVIRONMENT['doc']['insert_code']
+    ),
+}
+@task(doc_clean, name='build', help=_doc_build_help)
+def doc_build(target=ENVIRONMENT['doc']['target'],
+              code=ENVIRONMENT['doc']['insert_code']):
+    """Build documentation using Sphinx."""
+    build_d = ENVIRONMENT['doc']['build_d']
+    out_d   = os.path.join(build_d, 'output', target)
+    src_d   = os.path.join(build_d, ENVIRONMENT['project']['src_d'])
+
+    msg.write(msg.INFORMATION, 'Building documentation')
+
+    shutil.copytree(ENVIRONMENT['doc']['src_d'], build_d)
+    docstring.to_dir(
+        ENVIRONMENT['project']['src_d'],
+        src_d,
+        insert_code=code
+    )
+
+    run(
+        'sphinx-build -b {target} {build_d} {out_d}'.format(
+            **locals()
+        )
+    )
+
+
+#
+# Documentation tasks namespace
+# """""""""""""""""""""""""""""
+
+ns_doc = Collection('doc')
+ns_doc.add_task(doc_build)
+ns_doc.add_task(doc_clean)
+
+ns.add_collection(ns_doc)
+
+
+#
 # Global tasks
 # ^^^^^^^^^^^^
 
-@task(project_build, default=True)
+@task(project_build, doc_build, default=True)
 def build():
     """Call all the build tasks to build the project."""
     msg.write(msg.INFORMATION, 'Done!')
 
 
-@task(project_clean)
+@task(doc_clean, project_clean)
 def clean():
     """Clean the whole project tree from built files."""
     patterns = [
