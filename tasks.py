@@ -29,8 +29,10 @@ import glob
 import shutil
 
 import yaml
+import jinja2
 
 from copy import deepcopy
+from functools import reduce
 from contextlib import suppress
 
 from invoke import Collection, task
@@ -420,6 +422,7 @@ class env(object):
     """
     ENVIRONMENT_DEFAULTS = {
         'project': {
+            'default_env': 'dev',
             'build_d': 'build',
             'src_d': 'src',
         },
@@ -542,24 +545,174 @@ class env(object):
                         target[k] = deepcopy(v)
 
 
+    @classmethod
+    def update_context(cls, environment, *ctx):
+        """Update Jinja2 context dictionary with useful elements from
+        the project.
+
+        :param dict environment: Current project environment.
+        :param dict ctx: Context dictionary to be updated.
+
+        """
+        context_functions = (
+            cls.context_add_project,
+        )
+
+        for c in ctx:
+            for fn in context_functions:
+                fn(environment, c)
+
+
+    @classmethod
+    def render_tree(cls, context, src, dst):
+        """Run given *src* directories through the Jinja2 template engine
+        and render the result in the *dst* folder.
+
+        :param dict context: Context dictionary to pass to Jinja2.
+
+        :param dict src: Dictionary of source directories to be rendered.
+                         Keys of this dictionary should be paths relative
+                         to the destination and values the original path
+                         for the template files::
+
+                           >>> src = {
+                           ...   '.': '/path/to/foo',
+                           ...   'bar': '/path/to/bar',
+                           ... }
+
+                          Files from ``/path/to/foo`` will be rendered in
+                          ``dst/.`` while files from ``/path/to/bar``
+                          will be in ``dst/bar``.
+
+        """
+        loader = {k: jinja2.FileSystemLoader(v) for k, v in src.items()}
+        engine = jinja2.Environment(
+            extensions = ['jinja2.ext.loopcontrols', ],
+            loader = jinja2.PrefixLoader(loader),
+            trim_blocks = True,
+            lstrip_blocks = True
+        )
+
+        for name, path in src.items():
+            fs.copytree(path, os.path.join(dst, name))
+
+        for name in engine.list_templates():
+            with open(os.path.join(dst, name), 'w') as fp:
+                fp.write(engine.get_template(name).render(context))
+
+
+    @classmethod
+    def context_add_project(cls, environment, ctx):
+        """Add project information from the environment into the context.
+
+        :param dict environment: Current project environment.
+        :param dict ctx: Context dictionary to be updated.
+
+        """
+        cls.update(
+            ctx.setdefault('project', {}),
+            environment.get('project', {})
+        )
+
+
 #
 # Task definitions
 # ----------------
 
-ENVIRONMENT = env.load('', use_defaults=True)
+ENVIRONMENT = env.load('env.conf', use_defaults=True)
+
+
+#
+# Project tasks
+# ^^^^^^^^^^^^^
+
+@task(name='clean')
+def project_clean():
+    """Clean project folder from built files."""
+    build_d   = ENVIRONMENT['project']['build_d']
+    src_d     = ENVIRONMENT['project']['src_d']
+    build_log = os.path.join(build_d, '.build')
+
+    patterns = [build_d, ]
+    if os.path.exists(build_log):
+        with open(build_log, 'r') as fp:
+            patterns = [x for x in fp.read().splitlines() if x]
+        patterns.append(build_log)
+
+    lines = [x for x in fs.shexpand(patterns)]
+    if lines:
+        msg.write(msg.INFORMATION,
+                  'Cleaning project', *sorted(lines, reverse=True))
+    fs.rmtree(patterns)
+
+
+_proj_build_help = {
+    'environment': "Project environment to be built. Defaults to {}.".format(
+        ENVIRONMENT.get('default_env', 'dev')
+    ),
+}
+@task(project_clean, name='build', help=_proj_build_help)
+def project_build(environment=ENVIRONMENT.get('default_env', 'dev')):
+    """Build the project."""
+    build_d   = ENVIRONMENT['project']['build_d']
+    src_d     = ENVIRONMENT['project']['src_d']
+    build_log = os.path.join(build_d, '.build')
+
+    fs.copytree(src_d, build_d)
+
+    proj_env = [
+        x
+        for x in ENVIRONMENT.get('environment', {})
+        if x.get('name', '') == environment
+    ][0]
+
+    dirs = {
+        '.': ENVIRONMENT['project']['src_d'],
+    }
+
+    context = {}
+    with suppress(AttributeError):
+        context = {
+            k: v
+            for k, v in proj_env.get('variables', {}).items()
+        }
+    env.update_context(ENVIRONMENT, context)
+
+    rendered = [
+        os.path.join(build_d, origine.replace(path, name))
+        for name, path in dirs.items()
+        for origine in fs.lstree(path, recursive=True)
+    ]
+
+    msg.write(msg.INFORMATION, 'Building project', *rendered)
+    env.render_tree(context, dirs, build_d)
+
+    with suppress(OSError), open(build_log, 'w') as fp:
+        fp.write('\n'.join(rendered))
+
+
+#
+# Project task namespace
+# """"""""""""""""""""""
+
+ns_proj = Collection('proj')
+ns_proj.add_task(project_build)
+ns_proj.add_task(project_clean)
+
+ns.add_collection(ns_proj)
 
 
 #
 # Global tasks
 # ^^^^^^^^^^^^
 
-@task(default=True)
+@task(project_build, default=True)
 def build():
     """Call all the build tasks to build the project."""
     msg.write(msg.INFORMATION, 'Done!')
 
 
-@task
+@task(project_clean)
 def clean():
     """Clean the whole project tree from built files."""
     patterns = [
