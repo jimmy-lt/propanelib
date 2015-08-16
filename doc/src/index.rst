@@ -12,20 +12,12 @@
    You should have received a copy of the MIT License along with
    propanelib. If not, see <http://opensource.org/licenses/MIT>.
 
-propanelib |release| documentation
-==================================
+Source Code Reference
+=====================
 
-Contents:
+This reference manual describes the content of each file part of
+*propanelib*'s source code.
 
 .. toctree::
    :maxdepth: 2
-
-   src/index
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`search`
 
